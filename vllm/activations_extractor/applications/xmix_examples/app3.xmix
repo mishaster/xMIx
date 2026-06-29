@@ -1,0 +1,8 @@
+self.vec_indices = torch.full((2048,),1, dtype=torch.int32, device=self.device)
+self.arbitrary_vector = torch.full((self.hidden_size,), 0.1,device=self.device, dtype=self.model_config.dtype)
+self.steer_refusal_vec = SteeringVectorDotSubtractNormalized(hidden_size = self.model_config.hidden_size, max_tokens = 2048,
+                   steering_vector = self.arbitrary_vector, vec_indices = self.vec_indices, dtype = self.model_config.dtype, device = self.device)
+self.condition_projector = torch.full((self.model_config.hidden_size,self.model_config.hidden_size), 0.1, device=self.device, dtype=torch.float32)
+self.cosine_similarity_instance = CondProjCosSim(condition_projector= self.condition_projector , threshold=0.2, max_tokens = 2048)
+
+m.write(self.steer_refusal_vec.run).layer[15:23].submodule("mlp.post").cond(self.cosine_similarity_instance.gates("vec_indices").layer([12]).submodule("mlp.post"))

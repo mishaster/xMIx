@@ -1,0 +1,5 @@
+self.truth_probe_weight = torch.rand((1,self.model_config.hidden_size),dtype=self.model_config.dtype,device = self.device)
+self.truth_probe_bias = torch.rand((1,),dtype=self.model_config.dtype,device = self.device)
+self.truth_probe = LinearProbe(max_tokens = 2048, weights= self.truth_probe_weight, bias = self.truth_probe_bias)
+
+m.read(self.truth_probe.run).layer([13]).submodule("mlp.post")

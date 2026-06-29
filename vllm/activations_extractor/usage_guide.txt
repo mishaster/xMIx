@@ -1,0 +1,200 @@
+Usage Guide for claude_app.py Classes
+========================================
+
+
+SteeringVectorReplacer
+----------------------
+
+What it does:
+  Completely overwrites selected token activations with a fixed vector v.
+
+When to use:
+  When you want to force the model into a target representational state,
+  regardless of what it was computing. E.g., locking in a "safe" or "factual"
+  mode at a specific token.
+
+Model & Layer:
+  - Any decoder-only transformer (Llama, Qwen, Mistral)
+  - Hook into a single middle layer -- roughly 40-60% through the network
+      Llama-3-8B (32 layers): layers 14-20
+      Qwen2.5-7B (28 layers): layers 12-17
+
+Where to get v:
+  Run a reference forward pass with the model generating the target behavior,
+  capture the hidden state at layer L for a representative token, and take the
+  mean over many such examples:
+
+      target_activations = []
+      hook = model.model.layers[14].register_forward_hook(
+          lambda m, inp, out: target_activations.append(out[0][:, -1, :].detach())
+      )
+      for prompt in target_prompts:
+          model(tokenize(prompt))
+      hook.remove()
+
+      v = torch.stack(target_activations).mean(0).squeeze()  # (hidden_size,)
+
+Setup:
+      replacer = SteeringVectorReplacer(hidden_size=4096, max_tokens=2048,
+                                        dtype=model.dtype, device="cuda")
+      replacer.load_vector(v)
+      replacer.load_vec_indices(torch.ones(2048, dtype=torch.int32, device="cuda"))
+      # Wire token_indices + n_valid_buf from EOLTokenDetector
+      detector.set_output_buffers(replacer.token_indices, replacer.n_valid_buf)
+
+
+SteeringConceptReplace
+----------------------
+
+What it does:
+  Shifts each activation proportionally to how much of concept h1 it contains,
+  moving it toward concept h2.
+  Formula: h += dot(h, h1_norm) * (h2 - h1)
+
+When to use:
+  Steerable chatbots, thinking-speed control, preference-based steering -- any
+  case where you want to smoothly interpolate between two concept directions
+  rather than a hard override.
+
+Model & Layer:
+  - Any decoder-only transformer
+  - One or multiple layers simultaneously, each with its own instance
+      Llama-3-8B: layers 15-22 (later layers carry more semantic content)
+      Qwen2.5-7B: layers 13-20
+
+Where to get h1 and h2:
+  These are concept centroids -- mean hidden states at layer L under two
+  contrasting conditions:
+
+      h1_list, h2_list = [], []
+
+      for prompt in concept_a_prompts:   # e.g., chain-of-thought examples
+          h1_list.append(get_hidden_state(model, prompt, layer=16))
+
+      for prompt in concept_b_prompts:   # e.g., direct-answer examples
+          h2_list.append(get_hidden_state(model, prompt, layer=16))
+
+      h1 = torch.stack(h1_list).mean(0)   # (hidden_size,) -- "from" concept
+      h2 = torch.stack(h2_list).mean(0)   # (hidden_size,) -- "to" concept
+
+  Alternatively, use the EasySteer extractors:
+    - DiffMean:  h1 = mean(negative_hiddens[layer]),
+                 h2 = mean(positive_hiddens[layer])
+    - PCA:       first principal component separating the two classes
+
+Setup:
+      steerer = SteeringConceptReplace(hidden_size=4096, max_tokens=2048,
+                                       dtype=model.dtype, device="cuda")
+      steerer.load_vectors(h1, h2)   # h1 is normalised internally
+      steerer.load_vec_indices(torch.ones(2048, dtype=torch.int32, device="cuda"))
+      detector.set_output_buffers(steerer.token_indices, steerer.n_valid_buf)
+
+Note:
+  vec_indices can be set per-token using a classifier output (e.g.,
+  CondProjCosSim.out_bool) to gate steering only when the current token
+  "looks like" concept h1.
+
+
+SteeringLinear
+--------------
+
+What it does:
+  Replaces selected activations with W @ h + b -- a full learned linear
+  transformation.
+
+When to use:
+  When you have trained a transformation matrix mapping one representation
+  subspace to another. E.g., "incorrect reasoning" -> "correct reasoning",
+  or style transfer at the activation level.
+
+Model & Layer:
+  - Typically applied at one layer -- the layer where the transformation
+    was trained
+  - Llama-3-8B: layers 16-24 (where reasoning abstractions form)
+  - hidden_size must match the model:
+      Llama-3-8B  = 4096
+      Qwen2.5-7B  = 3584
+
+Where to get W and b:
+  W is a (hidden_size x hidden_size) matrix -- it must be trained, not
+  hand-crafted. Two approaches:
+
+  1. Train a linear map W such that W @ h_bad ~= h_good using paired
+     contrastive examples at layer L:
+
+         # h_bad:  activations when model reasons incorrectly
+         # h_good: activations when model reasons correctly
+         #         (same prompts, different completions)
+         W, b, _, _, _ = torch.linalg.lstsq(h_bad, h_good)
+
+  2. Load from a saved EasySteer checkpoint (linear.py payload format):
+
+         payload = torch.load("linear_layer16.pt")
+         W = payload["weight"]   # (hidden_size, hidden_size)
+         b = payload["bias"]     # (hidden_size,)
+
+Setup:
+      steerer = SteeringLinear(hidden_size=4096, max_tokens=2048, device="cuda")
+      steerer.load_weights(W.float(), b.float())
+      steerer.load_vec_indices(vi)
+      detector.set_output_buffers(steerer.token_indices, steerer.n_valid_buf)
+
+Important:
+  W and b must be float32. The GEMM is always in float32 internally; the
+  result is cast back to x's dtype by the Triton kernel.
+
+
+SteeringLMSteer
+---------------
+
+What it does:
+  Adds a low-rank residual alpha * (h @ P1) @ P2^T -- the activation is
+  projected down to `rank` dimensions and back up, then added to itself.
+
+When to use:
+  Directly implements the LM-Steer paper. Efficient, low-parameter steering
+  for attributes like sentiment, toxicity, formality. Designed to be applied
+  at every token during generation, not just EOL tokens.
+
+Model & Layer:
+  - Original LM-Steer paper applies at the token embedding layer (before any
+    transformer blocks) -- hook into model.model.embed_tokens output
+  - Can also be applied at every transformer layer simultaneously with
+    different P1/P2 per layer
+  - rank is typically 1-16 (very small); the paper uses rank=1 for binary
+    attributes
+
+Where to get P1, P2, alpha:
+  These come from training the LM-Steer model. The EasySteer
+  replications/lm_steer/ directory contains pretrained weights.
+
+  If loading from EasySteer's saved format:
+
+      payload = torch.load("lm_steer_sentiment_layer0.pt")
+      P1    = payload["projector1"]    # (hidden_size, rank)
+      P2    = payload["projector2"]    # (hidden_size, rank)
+      alpha = payload["scale_factor"]  # float, e.g. 1.0 for moderate steering
+
+  alpha controls intensity:
+    positive value  -> adds the target attribute
+    negative value  -> subtracts / suppresses the attribute
+
+Setup:
+      # rank must be declared at construction time
+      steerer = SteeringLMSteer(hidden_size=4096, rank=4, max_tokens=2048,
+                                device="cuda")
+      steerer.load_projectors(P1.float(), P2.float(), alpha=1.5)
+
+      # For LM-Steer applied at every token: no EOLTokenDetector needed --
+      # set all vec_indices=1 and fill token_indices with all row indices
+      steerer.load_vec_indices(torch.ones(2048, dtype=torch.int32, device="cuda"))
+      steerer.token_indices[:max_seq_len].copy_(
+          torch.arange(max_seq_len, dtype=torch.int32, device="cuda")
+      )
+      steerer.n_valid_buf.fill_(current_seq_len)
+
+Note:
+  Unlike the other three classes, LM-Steer is typically applied to every
+  token (not just EOL tokens), so EOLTokenDetector is usually not needed --
+  just fill token_indices with all row indices and n_valid_buf with the
+  current sequence length.

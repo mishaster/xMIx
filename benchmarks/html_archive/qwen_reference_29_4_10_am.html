@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface-hover: #222632;
+    --border: #2a2e3a;
+    --text: #e4e6ed;
+    --text-dim: #8b90a0;
+    --accent-1: #6c8cff;
+    --accent-2: #ff6c8c;
+    --accent-3: #6cffc8;
+    --accent-4: #ffc86c;
+    --accent-5: #c86cff;
+    --accent-6: #6cfff0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  .header {
+    max-width: 1200px;
+    margin: 0 auto 2.5rem;
+  }
+
+  .header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.5rem;
+  }
+
+  .header .params {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    background: var(--surface);
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  .group-section {
+    max-width: 1200px;
+    margin: 0 auto 2.5rem;
+  }
+
+  .group-title {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--accent-4);
+    margin-bottom: 1rem;
+    padding-left: 0.5rem;
+    border-left: 3px solid var(--accent-4);
+  }
+
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: border-color 0.2s;
+  }
+
+  .chart-card:hover {
+    border-color: var(--accent-1);
+  }
+
+  .chart-card h3 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    margin-bottom: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .bar-group {
+    margin-bottom: 0.85rem;
+  }
+
+  .bar-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-bottom: 0.3rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .bar-track {
+    width: 100%;
+    height: 32px;
+    background: var(--bg);
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 10px;
+    min-width: 60px;
+    transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+  }
+
+  .bar-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+    background: linear-gradient(90deg, transparent 60%, rgba(255,255,255,0.08));
+  }
+
+  .bar-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #fff;
+    position: relative;
+    z-index: 1;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+
+  .higher-better { color: var(--accent-3); font-size: 0.7rem; font-weight: 500; }
+  .lower-better { color: var(--accent-2); font-size: 0.7rem; font-weight: 500; }
+
+  .pct-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    margin-left: 8px;
+    display: inline-block;
+    position: relative;
+    z-index: 1;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  .pct-good {
+    background: rgba(0, 180, 120, 0.85);
+    color: #fff;
+  }
+  .pct-bad {
+    background: rgba(220, 50, 80, 0.85);
+    color: #fff;
+  }
+  .pct-baseline {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Benchmark Results Dashboard</h1>
+  <div class="params">max_num_seqs=32  &middot;  input_len=512  &middot;  output_len=128</div>
+</div>
+<div class="group-section">
+  <div class="group-title">All Modes</div>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>Total Token Throughput (tokens/s) <span class="higher-better">&#9650; higher is better</span></h3>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm vanilla">2 gpus qwen vllm vanilla</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:100.0%;background:var(--accent-1);">
+            <span class="bar-value">8821.9<span class="pct-badge pct-baseline">baseline</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer all layers">2 gpus qwen steer all layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:87.9%;background:var(--accent-2);">
+            <span class="bar-value">7753.4<span class="pct-badge pct-bad">-12.1%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer single layers">2 gpus qwen steer single layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:93.7%;background:var(--accent-3);">
+            <span class="bar-value">8265.3<span class="pct-badge pct-bad">-6.3%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm eager">2 gpus qwen vllm eager</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:29.2%;background:var(--accent-4);">
+            <span class="bar-value">2579.2<span class="pct-badge pct-bad">-70.8%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe all layers(*)">2 gpus linear probe all layers(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:88.2%;background:var(--accent-5);">
+            <span class="bar-value">7780.5<span class="pct-badge pct-bad">-11.8%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe single layer(*)">2 gpus linear probe single layer(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:93.0%;background:var(--accent-6);">
+            <span class="bar-value">8204.7<span class="pct-badge pct-bad">-7.0%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen no kernels">2 gpus qwen no kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:93.0%;background:var(--accent-1);">
+            <span class="bar-value">8202.4<span class="pct-badge pct-bad">-7.0%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2gpus qwen 3 kernels">2gpus qwen 3 kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:92.7%;background:var(--accent-2);">
+            <span class="bar-value">8179.1<span class="pct-badge pct-bad">-7.3%</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>Mean ITL (ms) <span class="lower-better">&#9660; lower is better</span></h3>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm vanilla">2 gpus qwen vllm vanilla</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:30.5%;background:var(--accent-1);">
+            <span class="bar-value">5.03<span class="pct-badge pct-baseline">baseline</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer all layers">2 gpus qwen steer all layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:36.1%;background:var(--accent-2);">
+            <span class="bar-value">5.94<span class="pct-badge pct-bad">+18.2%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer single layers">2 gpus qwen steer single layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:33.3%;background:var(--accent-3);">
+            <span class="bar-value">5.48<span class="pct-badge pct-bad">+9.1%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm eager">2 gpus qwen vllm eager</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:100.0%;background:var(--accent-4);">
+            <span class="bar-value">16.46<span class="pct-badge pct-bad">+227.6%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe all layers(*)">2 gpus linear probe all layers(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:35.3%;background:var(--accent-5);">
+            <span class="bar-value">5.81<span class="pct-badge pct-bad">+15.5%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe single layer(*)">2 gpus linear probe single layer(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:33.3%;background:var(--accent-6);">
+            <span class="bar-value">5.47<span class="pct-badge pct-bad">+8.9%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen no kernels">2 gpus qwen no kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:33.0%;background:var(--accent-1);">
+            <span class="bar-value">5.43<span class="pct-badge pct-bad">+8.1%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2gpus qwen 3 kernels">2gpus qwen 3 kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:33.7%;background:var(--accent-2);">
+            <span class="bar-value">5.54<span class="pct-badge pct-bad">+10.2%</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>P99 ITL (ms) <span class="lower-better">&#9660; lower is better</span></h3>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm vanilla">2 gpus qwen vllm vanilla</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:64.5%;background:var(--accent-1);">
+            <span class="bar-value">17.29<span class="pct-badge pct-baseline">baseline</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer all layers">2 gpus qwen steer all layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:100.0%;background:var(--accent-2);">
+            <span class="bar-value">26.82<span class="pct-badge pct-bad">+55.1%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen steer single layers">2 gpus qwen steer single layers</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:84.7%;background:var(--accent-3);">
+            <span class="bar-value">22.71<span class="pct-badge pct-bad">+31.3%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen vllm eager">2 gpus qwen vllm eager</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:65.9%;background:var(--accent-4);">
+            <span class="bar-value">17.66<span class="pct-badge pct-bad">+2.2%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe all layers(*)">2 gpus linear probe all layers(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:93.8%;background:var(--accent-5);">
+            <span class="bar-value">25.15<span class="pct-badge pct-bad">+45.4%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus linear probe single layer(*)">2 gpus linear probe single layer(*)</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:86.0%;background:var(--accent-6);">
+            <span class="bar-value">23.05<span class="pct-badge pct-bad">+33.3%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2 gpus qwen no kernels">2 gpus qwen no kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:77.8%;background:var(--accent-1);">
+            <span class="bar-value">20.88<span class="pct-badge pct-bad">+20.7%</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="bar-group">
+        <div class="bar-label" title="2gpus qwen 3 kernels">2gpus qwen 3 kernels</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:84.3%;background:var(--accent-2);">
+            <span class="bar-value">22.62<span class="pct-badge pct-bad">+30.8%</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-1)"></div>2 gpus qwen vllm vanilla</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-2)"></div>2 gpus qwen steer all layers</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-3)"></div>2 gpus qwen steer single layers</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-4)"></div>2 gpus qwen vllm eager</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-5)"></div>2 gpus linear probe all layers(*)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-6)"></div>2 gpus linear probe single layer(*)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-1)"></div>2 gpus qwen no kernels</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-2)"></div>2gpus qwen 3 kernels</div>
+  </div>
+</div>
+</body>
+</html>

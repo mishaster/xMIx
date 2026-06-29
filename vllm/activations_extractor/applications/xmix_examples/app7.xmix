@@ -1,0 +1,4 @@
+self.r_7 = torch.rand((self.hidden_size),dtype=self.model_config.dtype,device=self.device)
+self.scalar_7 = torch.rand((1),dtype=self.model_config.dtype,device=self.device)
+self.kl_than_steer = SteeringVectorScaledAdder(r=self.r_7,coeff=self.scalar_7,max_tokens=2048)
+m.write(self.kl_than_steer.run).layer[11:30].submodule("mlp.post")

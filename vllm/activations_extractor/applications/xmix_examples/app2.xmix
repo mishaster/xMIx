@@ -1,0 +1,18 @@
+#model: llama
+MAX_VECS=3
+scales = torch.tensor([0.5,0.5,-0.5],device=self.device,dtype=self.model_config.dtype)
+self.scales_across_all_tokens = scales.repeat(2048,1)
+steering_vec_indices = torch.tensor([0,1,2],device=self.device,dtype=torch.int32)
+self.indices_across_all_tokens = steering_vec_indices.repeat(2048,1)
+self.num_of_vecs_across_all_tokens = torch.full((2048,), 3, device=self.device, dtype=torch.int32)
+self.steer_instance = SteeringVectorAdder(r = self.combined_tensor, scales=self.scales_across_all_tokens,
+                                          vec_indices=  self.indices_across_all_tokens,
+                                          n_vecs_per_token=self.num_of_vecs_across_all_tokens)
+										  
+
+#token_detector: init
+from vllm.utils.look_for_eol_func import EOL_TENSOR
+self.token_detector = EOLTokenDetector(eol_token_ids=EOL_TENSOR,vocab_size= self.vocab_size)
+#token_detector: end
+
+m.write(self.steer_instance.run).layer[15:23].submodule("mlp.post").cond(self.token_detector.gates("input_map").layer("model"))

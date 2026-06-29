@@ -1,0 +1,5 @@
+self.vec_indices = torch.full((2048,),1, dtype=torch.int32, device=self.device)
+self.arbitrary_vector = torch.full((self.hidden_size,), 0.1,device=self.device, dtype=self.model_config.dtype)
+self.steer_refusal_vec = SteeringVectorDotSubtractNormalized(hidden_size = self.model_config.hidden_size, max_tokens = 2048,
+    steering_vector = self.arbitrary_vector, vec_indices = self.vec_indices, dtype = self.model_config.dtype, device = self.device)
+m.write(self.steer_refusal_vec.run).layer("all").submodule("mlp.post")

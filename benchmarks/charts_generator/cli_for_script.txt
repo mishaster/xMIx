@@ -1,0 +1,11 @@
+# Single CSV, label auto-derived from filename:
+python average_csv.py summary_2gpus_qwen_eager.csv -o averaged_qwen_eager.xlsx
+
+# Multiple CSVs merged into one Excel (one per mode):
+python average_csv.py eager.csv vanilla.csv steer.csv -o all_results_qwen.xlsx
+
+# Explicit labels per file:
+python average_csv.py \
+    --input "summary_eager.csv:2 gpus qwen eager" \
+    --input "summary_vanilla.csv:2 gpus qwen vanilla" \
+    -o all_results_qwen.xlsx

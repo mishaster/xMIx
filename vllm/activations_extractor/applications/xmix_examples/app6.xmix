@@ -1,0 +1,4 @@
+self.w6 = torch.rand((self.hidden_size, self.hidden_size),device=self.device,dtype=self.model_config.dtype)
+self.b6 = self.fc1_bias = torch.rand((self.hidden_size),dtype=self.model_config.dtype,device=self.device)
+self.linear_steer = SteeringLinear(W =self.w6, b = self.b6, vec_indices = self.vec_indices, max_tokens = 2048)
+m.write(self.linear_steer.run).layer([13]).submodule("mlp.post")

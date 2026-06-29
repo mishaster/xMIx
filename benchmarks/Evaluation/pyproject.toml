@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evaluation"
+version = "0.1.0"
+description = "Performance report tooling for evaluation artifacts."
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.8",
+    "numpy>=1.26",
+    "openpyxl>=3.1",
+    "pandas>=2.2",
+]
+
+[project.scripts]
+perf-report = "Script.perf_report:main"
+
+[tool.setuptools]
+packages = ["Script"]

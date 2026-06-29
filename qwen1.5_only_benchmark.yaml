@@ -1,0 +1,58 @@
+# Config for benchmarks/run_benchmark_matrix.py
+#
+# Run with (from the repo root, since cmd: lines use relative paths):
+#   python benchmarks/run_benchmark_matrix.py benchmarks/benchmark_matrix.yaml
+#
+# - output_dir: where benchmark runs drop their results subdirectories
+# - archive_dir: where the script moves each run's subdirectory to (created if missing)
+# - runs: list of refs; each is either `branch:` OR `commit:` (not both)
+#   each entry has a list of benchmarks with a shell `cmd` and a `rename_to`
+#   target name (the moved subdirectory's new name under archive_dir)
+
+output_dir: /home/michael.blum/vLLM_Patched/benchmarks/results/
+archive_dir: /home/michael.blum/vLLM_Patched/benchmarks/paper_results/
+
+# Constants — referenced as *llama_cmd / *qwen_cmd / *mixtral_cmd below.
+# This key is ignored by run_benchmark_matrix.py (it only reads output_dir,
+# archive_dir, and runs). Each `>-` folded scalar joins its indented lines with
+# single spaces and strips the trailing newline, yielding one shell command.
+_commands:
+
+  - &qwen_1_5_cmd >-
+      vllm bench sweep serve
+      --serve-cmd 'vllm serve deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --dtype float16 --tensor-parallel-size 2'
+      --bench-cmd 'vllm bench serve --backend vllm --model deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --endpoint /v1/completions --dataset-name sharegpt --dataset-path ./ShareGPT_V3_unfiltered_cleaned_split.json --num-prompts 300'
+      --serve-params benchmarks/serve_hparams.json
+      --bench-params benchmarks/bench_hparams.json
+      -o benchmarks/results --num-runs 25
+
+  - &qwen_1_5_eager_cmd >-
+      vllm bench sweep serve
+      --serve-cmd 'vllm serve deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --dtype float16 --tensor-parallel-size 2 --enforce-eager'
+      --bench-cmd 'vllm bench serve --backend vllm --model deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B --endpoint /v1/completions --dataset-name sharegpt --dataset-path ./ShareGPT_V3_unfiltered_cleaned_split.json --num-prompts 300'
+      --serve-params benchmarks/serve_hparams.json
+      --bench-params benchmarks/bench_hparams.json
+      -o benchmarks/results --num-runs 25
+
+runs:
+
+  - commit: 53de8626f57e8701a19e3b966324f2707f6a988c 
+    benchmarks:
+      - { cmd: *qwen_1_5_cmd,    rename_to: qwen1_5_vanilla_run }
+
+  - commit: 53de8626f57e8701a19e3b966324f2707f6a988c 
+    benchmarks:
+      - { cmd: *qwen_1_5_eager_cmd,    rename_to: qwen1_5_vanilla_eager }
+
+  - branch: x_llama_qwen_app_1
+    benchmarks:
+      - { cmd: *qwen_1_5_cmd,  rename_to: qwen1_5_all_layers }   # intentional: qwen3 on llama_app_2 branch
+
+  - branch: x_qwen_1_5_single_layer
+    benchmarks:
+      - { cmd: *qwen_1_5_cmd,  rename_to: qwen1_5_single_layer }   # intentional: qwen3 on llama_app_2 branch
+
+  - branch: x_qwen_1_5_multi_vec 
+    benchmarks:
+      - { cmd: *qwen_1_5_cmd,  rename_to: qwen1_5_multi_vec }   # intentional: qwen3 on llama_app_2 branch
+

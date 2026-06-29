@@ -1,0 +1,254 @@
+================================================================================
+ xmix — Manual: adding a new class so the compiler supports it
+================================================================================
+
+SHORT ANSWER
+--------------------------------------------------------------------------------
+The compiler is DATA-DRIVEN through one file:
+      vllm/activations_extractor/xmix/spec.py
+For the common case you touch only TWO files:
+  1. the file that DEFINES your class
+     (write_activations.py / read_activations.py / cond_kernels.py)
+  2. spec.py  — register the class in SPEC
+...and then use it from a .xmix file.
+
+These files almost NEVER change when you add a class:
+      parser.py, apply.py, compile.py, __init__.py, ir.py, errors.py
+codegen.py changes ONLY if your op is "synthesized" (Case B).
+
+
+WHICH CASE ARE YOU IN?
+--------------------------------------------------------------------------------
+A. A steering/probe class you build yourself in the .xmix preamble and reference
+   by variable:   m.write(self.x.run)...           -> Case A   (spec.py only)
+B. A steering op the COMPILER should construct from a symbolic arg:
+   m.write(MyOp(arg1).run)...                       -> Case B   (spec.py + codegen)
+C. A per-layer condition used via .cond(self.x.gates("buf").layer([..]).submodule(..))
+                                                    -> Case C   (spec.py)
+D. A model-scope class that runs INSIDE model.forward (like the token detector)
+                                                    -> Case D   (spec.py + anchors)
+E. A probe used as .cond(MyProbe.compareOp(a,b)...) -> Case E   (spec.py + bridge fn)
+F. Your class installs at a layer hook-point not yet known
+                                                    -> Case F   (spec.py submodules)
+G. A whole new model family (not llama/qwen/mixtral)
+                                                    -> Case G   (spec.py models)
+
+Cases combine: e.g. a brand-new steering class at a brand-new hook-point = A + F.
+
+
+================================================================================
+CASE A — variable-ref steering/probe op  (the everyday case)
+================================================================================
+Example .xmix usage:
+      self.x = MyClass(arg1=..., arg2=...)
+      m.write(self.x.run).layer[10:20].submodule("mlp.post")
+
+Files to edit:
+
+1) DEFINE THE CLASS  (e.g. vllm/activations_extractor/write_activations.py)
+   - a constructor,
+   - a run(...) method (the callable the hook installs),
+   - registered buffers/parameters for stable addresses (CUDA-graph safe) —
+     copy the pattern from SteeringVectorAdder / SteeringVectorScaledAdder.
+
+2) REGISTER IT  (vllm/activations_extractor/xmix/spec.py, under SPEC["ops"]):
+
+      "MyClass": OpSpec(
+          cls_path="vllm.activations_extractor.write_activations.MyClass",
+          flag="w",            # "w" = write hook, "r" = read hook
+          arity=0,             # 0 = hand-built (variable-ref). >0 = synthesized (Case B)
+          method="run",        # the chained method the hook installs
+          build_kind=None,     # None = no synthesis
+          # MyClass(arg1, arg2, max_tokens)   <- mirror the real signature here
+          args={               # MANDATORY for variable-ref classes
+              "arg1": None,                 # None        = REQUIRED (compile error if omitted)
+              "arg2": None,
+              "max_tokens": "2048",         # string      = optional DEFAULT, injected verbatim
+              "dtype": "self.model_config.dtype",   # defaults may be runtime expressions
+          },
+      ),
+
+   Notes on `args` (added Iteration 11):
+   - It is REQUIRED. A class known to SPEC but missing `args` is itself a compile error.
+   - Order = constructor order (used to map positional args).
+   - None = required; a string = optional, emitted verbatim as `name=<string>`.
+   - The schema is AUTHORITATIVE over the real signature: you may give a default
+     for an arg the class itself requires (e.g. max_tokens="2048").
+   - At compile time: missing required -> located error; unknown/typo'd arg ->
+     located error listing valid names; omitted optional -> default injected.
+
+3) USE IT in a .xmix (build in preamble, reference the method).
+
+GOTCHA — ARITY MATCHING (no code change, just be aware):
+   The install site passes a fixed number of positional args, from
+   SPEC["submodules"][<submodule>]["write_arity" | "read_arity"].
+   The compiler introspects MyClass.run (real signature minus self).
+     - equal           -> bare install: layer.set_..._hook(self.x.run, "w")
+     - run takes FEWER -> compiler auto-emits a trimming lambda
+     - run takes MORE  -> you must add extra-arg source exprs (see Case B step 3)
+   (mlp.post: write_arity=3, read_arity=1. A 3-arg run installs bare at mlp.post write.)
+
+
+================================================================================
+CASE B — synthesized op  (compiler constructs it from symbolic args)
+================================================================================
+Example .xmix usage:  m.write(MyOp(arg1).run)...
+
+1) DEFINE THE CLASS (as Case A).
+
+2) spec.py SPEC["ops"]:
+      "MyOp": OpSpec(cls_path="...MyOp", flag="w", arity=1, method="run",
+                     build_kind="my_builder"),   # arity = number of symbolic DSL args
+   (No `args` schema — it is not constructed in the preamble.)
+
+3) vllm/activations_extractor/xmix/codegen.py:
+   - Write an emitter that returns the construction lines:
+         def _emit_my_builder(cls_name, var, args, i) -> list[str]:
+             ...  # raw torch lines building `var`
+   - Register it:
+         _OP_EMITTERS = { "steering_vector_adder": _emit_steering_vector_adder,
+                          "my_builder": _emit_my_builder }
+   - If run() needs trailing args the site doesn't pass, add them:
+         _EXTRA_ARG_EXPRS = { "MyOp": lambda var: (f"{var}.r", _STEERED_TOKENS_NUM) }
+
+
+================================================================================
+CASE C — per-layer condition instance
+================================================================================
+Example .xmix usage:
+      self.cond = MyCond(...)
+      m.write(self.x.run)...cond(self.cond.gates("steerer_buffer").layer([12]).submodule("mlp.post"))
+
+1) DEFINE THE CLASS: a run(...) read method + a buffer-wiring method
+   (e.g. set_output_buffers).
+
+2) spec.py SPEC["cond_instances"]:
+      "MyCond": {
+          "cls_path": "...MyCond",
+          "flag": "r",
+          "method": "run",                 # installed as the read hook
+          "plug_fn": "set_output_buffers",  # the wiring function
+          "plug_kind": "out_bool",          # kwarg name; OR None -> positional: fn([target])
+          "scope": "layer",
+          # MyCond(arg1, threshold, max_tokens)
+          "args": { "arg1": None, "threshold": None, "max_tokens": "2048" },  # MANDATORY
+      }
+
+
+================================================================================
+CASE D — model-scope class (runs in model.forward, like EOLTokenDetector)
+================================================================================
+Example .xmix usage:
+      #token_detector: init
+      self.det = MyDetector(...)
+      #token_detector: end
+      m.write(self.x.run)...cond(self.det.gates("input_map").layer("model"))
+
+1) DEFINE THE CLASS: constructor + the forward-call signature + a buffer-wiring fn.
+
+2) spec.py SPEC["cond_instances"] (note scope="model" and the extra keys):
+      "MyDetector": {
+          "cls_path": "...MyDetector",
+          "flag": "r", "method": "run",
+          "plug_fn": "set_output_buffers",
+          "plug_kind": None,                # None -> positional list  fn([target])
+          "scope": "model",
+          "model_attr": "token_detector",   # self.model.model.<attr> the forward invokes
+          "args": { "eol_token_ids": None, "vocab_size": "self.vocab_size",
+                    "max_tokens": "2048", "device": "self.device" },   # MANDATORY
+          # placement banners (display text only):
+          "dest": "model file — model construction (e.g. init_token_detector)",
+          "run_dest": "model file — Model.forward (injected at the model_forward anchor)",
+          # apply landmarks (resolved per-model from SPEC["models"][*]["anchors"]):
+          "dest_anchor": "model_construct",     # where construction is injected
+          "run_anchor": "model_forward",        # where the forward run-call is injected
+          "run_call": (                          # template; {attr} -> model_attr
+              "if idx == 0 and self.{attr} is not None:",
+              "    self.{attr}(input_ids)",
+          ),
+      }
+
+3) spec.py SPEC["models"][<model>]["anchors"] — ONLY if you invent a NEW anchor
+   name. The existing model_construct / model_forward already exist for
+   llama / qwen / mixtral.
+
+4) THE REAL MODEL FILE(S) (llama.py / qwen3.py / mixtral.py): place the anchor
+   comments once —
+       # xmix:anchor model_construct    (in the construction method, e.g. init_*)
+       # xmix:anchor model_forward      (INSIDE the forward layer-loop)
+   (See compilation_instructions.txt for anchor placement rules.)
+
+
+================================================================================
+CASE E — cond probe op  ( .cond(MyProbe.compareOp(a, b)...) )
+================================================================================
+1) DEFINE THE PROBE CLASS.
+2) spec.py SPEC["cond_ops"]:
+      "MyProbe": {
+          "cls_path": "...MyProbe", "flag": "r", "arity": 2, "method": "run",
+          "compares": {
+              "biggerThan": CompareSpec(builder_path="pkg.module.factory",
+                                        ctor_kind="probe_threshold_mask", arity=2),
+          },
+      }
+3) Provide the probs->mask BRIDGE factory at `builder_path` with the contract
+   factory(probe, threshold, target_buffer) -> hook_callable.
+   (builder_path=None is allowed -> probe runs read-only, compiler emits a warning.)
+
+
+================================================================================
+CASE F — new layer hook-point (submodule)
+================================================================================
+Use when your class installs at a point not in SPEC["submodules"].
+1) The real layer setter must EXIST in the model (e.g. set_post_xxx_hook) and be
+   CALLED at that point in the layer/model forward.
+2) spec.py SPEC["submodules"]:
+      "my.point": { "setter": "set_post_xxx_hook",
+                    "write_arity": N,    # positional args the forward passes the hook here
+                    "read_arity":  M },  # (drives signature reconciliation)
+
+
+================================================================================
+CASE G — new model family
+================================================================================
+spec.py SPEC["models"]:
+      "mymodel": {
+          "arch": "MyModelForCausalLM",
+          "layers_attr": "model.layers",
+          "layer_idx_attr": "self_attn.layer_idx",
+          "anchors": {
+              "runner_setup":    "vllm/v1/worker/gpu_model_runner.py",
+              "runner_postload": "vllm/v1/worker/gpu_model_runner.py",
+              "model_construct": "vllm/model_executor/models/mymodel.py",
+              "model_forward":   "vllm/model_executor/models/mymodel.py",
+          },
+      }
+Declare it in the .xmix with:  #model: mymodel
+Place the anchor comments in that model's file. No code change.
+
+
+================================================================================
+FILES THAT NEVER CHANGE WHEN ADDING A CLASS
+================================================================================
+  parser.py      (generic; reads SPEC)
+  apply.py       (generic; anchor-driven)
+  compile.py     (CLI)
+  __init__.py    (exports only — does not enumerate classes)
+  ir.py, errors.py
+codegen.py changes ONLY for Case B (a synthesized builder + optional extra-arg row).
+
+
+================================================================================
+VERIFY AFTER ADDING
+================================================================================
+1) Compile a .xmix that uses the class:
+      python -m vllm.activations_extractor.xmix.compile your.xmix
+   -> must exit 0; the printed synthesized code must be valid Python (it is
+      parsed, never executed).
+2) Omit a required arg in the construction -> must FAIL at compile with
+      "<Class>: missing required argument(s): <name>".
+3) Mistype an arg -> must FAIL with "unknown argument '<x>' for <Class>
+      (valid: ...)".
+4) If anchors are involved (Cases D/F/G), preview the injection:
+      python -m vllm.activations_extractor.xmix.apply your_synth.py --dry-run
+================================================================================

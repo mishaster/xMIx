@@ -1,0 +1,13 @@
+{
+    "source_dir": "/home/michael.blum/vLLM_Patched/benchmarks/paper_results",
+    "work_dir": "/home/michael.blum/vLLM_Patched/benchmarks/charts_generator",
+    "archive_dir": "/home/michael.blum/vLLM_Patched/benchmarks/paper_results_second_back_4_5",
+    "output_xlsx": "qwen_extra_measurement.xlsx",
+    "extra_xlsx": ["all_results_qwen.xlsx"],
+    "chart_config": "groups.json",
+    "chart_output": "qwen_benchmark_dash.html",
+    "max_num_seqs": 32,
+    "random_input_len": 512,
+    "random_output_len": 128,
+    "scripts_dir": "/home/michael.blum/vLLM_Patched/benchmarks/charts_generator"
+}

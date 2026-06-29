@@ -1,0 +1,6 @@
+[
+    {
+        "max_num_seqs": 32,
+        "max_num_batched_tokens": 1024
+    }
+]

@@ -1,0 +1,142 @@
+================================================================================
+ xmix — apply / revert synthesized blocks into vLLM source
+ Compilation & overlay instructions
+================================================================================
+
+Where the "spec" lives — and the key correction: there are NO line numbers
+--------------------------------------------------------------------------------
+The design deliberately avoids line numbers (they drift). Instead:
+
+- SPEC["models"][<model>]["anchors"] in
+      vllm/activations_extractor/xmix/spec.py
+  maps each anchor NAME -> FILE (not line). For `llama`:
+
+      "anchors": {
+          "runner_setup":    "vllm/v1/worker/gpu_model_runner.py",
+          "runner_postload": "vllm/v1/worker/gpu_model_runner.py",
+          "model_construct": "vllm/model_executor/models/llama.py",
+          "model_forward":   "vllm/model_executor/models/llama.py",
+      },
+
+- The EXACT position in each file is wherever YOU put a `# xmix:anchor <name>`
+  comment. The tool searches for that comment and inserts after it — so the
+  "line number" is just the line your anchor comment is on. Move the comment,
+  the insertion moves with it.
+
+The compiled app2_synth.py echoes the resolved file per block in its tags
+(run the compile command below to see them):
+
+      # >>> XMIX-APPLY file=vllm/v1/worker/gpu_model_runner.py anchor=runner_setup <<<
+      # >>> XMIX-APPLY file=vllm/model_executor/models/llama.py anchor=model_construct <<<
+      # >>> XMIX-APPLY file=vllm/model_executor/models/llama.py anchor=model_forward <<<
+      # >>> XMIX-APPLY file=vllm/v1/worker/gpu_model_runner.py anchor=runner_postload <<<
+
+
+What you write yourself (one-time anchors, you pick the lines)
+--------------------------------------------------------------------------------
+Paste these comment lines at the indentation where the code should live:
+
+- vllm/v1/worker/gpu_model_runner.py
+      # xmix:anchor runner_setup        (construct-once spot)
+      # xmix:anchor runner_postload     (after load_model, the install region)
+
+- vllm/model_executor/models/llama.py
+      # xmix:anchor model_construct     (inside init_token_detector)
+      # xmix:anchor model_forward       (INSIDE the forward layer-loop)
+
+  IMPORTANT for `model_forward`: place it INSIDE the
+  `for idx, layer in enumerate(...)` loop in LlamaModel.forward (e.g. exactly
+  where the commented line 725 sits), at the loop-body indentation. The injected
+  run-call references the loop locals `idx` and `input_ids`, so it MUST be inside
+  that loop. The block inherits the anchor's indentation, e.g.:
+
+      for idx, layer in enumerate(...):
+          # xmix:anchor model_forward          <-- you add this (12 spaces)
+          ...
+  becomes, after apply:
+          # xmix:begin app2 model_forward
+          if idx == 0 and self.token_detector is not None:
+              self.token_detector(input_ids)
+          # xmix:end app2 model_forward
+
+
+The token detector has THREE injection sites (all auto-emitted, implicit):
+--------------------------------------------------------------------------------
+A model-scope detector (declared via `.cond(self.token_detector.gates("input_map")
+.layer("model"))`) produces three blocks automatically — you do NOT write
+anything extra in the .xmix:
+  1. model_construct   -> the detector's construction (the #token_detector: init
+                          block) goes into the model file (init_token_detector).
+  2. model_forward     -> the run-call `if idx == 0 ...: self.token_detector(
+                          input_ids)` goes INSIDE the model's forward loop.
+  3. runner_postload   -> attach + set_output_buffers wiring in gpu_model_runner.
+So for app2 you need all FOUR anchors above (runner_setup, runner_postload,
+model_construct, model_forward).
+
+
+Commands (run from repo root, vllm_env active)
+--------------------------------------------------------------------------------
+# 1. (re)generate the synth file with the XMIX-APPLY tags
+python -m vllm.activations_extractor.xmix.compile \
+  vllm/activations_extractor/applications/xmix_examples/app2.xmix -o app2_synth.py
+
+# 2. preview the injection without writing anything
+python -m vllm.activations_extractor.xmix.apply app2_synth.py --dry-run
+
+# 3. apply it for real (splices blocks at your anchors, wrapped in sentinels)
+python -m vllm.activations_extractor.xmix.apply app2_synth.py
+
+# see what's currently injected
+python -m vllm.activations_extractor.xmix.apply --status
+
+
+How to revert (the "not permanent" part)
+--------------------------------------------------------------------------------
+# remove exactly app2's injected blocks (uses the synth file's target list)
+python -m vllm.activations_extractor.xmix.apply --revert app2_synth.py
+
+# or by app id (no synth file needed)
+python -m vllm.activations_extractor.xmix.apply --revert --app app2
+
+# or strip ALL xmix blocks from every known target file
+python -m vllm.activations_extractor.xmix.apply --revert
+
+Revert deletes only the `# xmix:begin … / # xmix:end …` regions — your code and
+the anchor comments stay.
+
+Git fallback if ever needed:
+  git checkout vllm/v1/worker/gpu_model_runner.py vllm/model_executor/models/llama.py
+
+
+Prerequisite
+--------------------------------------------------------------------------------
+Step 3 needs the three anchor comments to already exist in those files,
+otherwise it stops with:
+      anchor '# xmix:anchor runner_postload' not found ...
+and changes nothing.
+
+
+Status of the tool
+--------------------------------------------------------------------------------
+One thing not yet finished: a run of the compile + a self-contained apply/revert
+test (on a throwaway file, not real source) to confirm it end-to-end was
+rejected, so the tool is WRITTEN but NOT YET RUN. To confirm: run step 1 and the
+--dry-run in step 2 and check the output (or allow the run), then iterate if
+needed.
+
+
+Notes on other models (qwen / mixtral)
+--------------------------------------------------------------------------------
+- Declare the model at the top of the .xmix with a pragma, e.g.:
+      #model: qwen
+  (default is `llama` if omitted).
+- The compiler then bakes that model's files into the XMIX-APPLY tags, so
+  `model_construct` resolves to:
+      llama   -> vllm/model_executor/models/llama.py
+      qwen    -> vllm/model_executor/models/qwen3.py
+      mixtral -> vllm/model_executor/models/mixtral.py
+  (runner_setup / runner_postload stay in gpu_model_runner.py for all models).
+- Add a new model by adding an entry under SPEC["models"] in spec.py — no code
+  change. Then place the matching `# xmix:anchor <name>` comments in that model's
+  file.
+================================================================================

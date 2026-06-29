@@ -1,0 +1,86 @@
+# Config for run_output_comparison.py
+#
+# Compares the textual outputs of `vllm bench serve` across two (or more)
+# git refs (branches or commits), running each ref multiple times and
+# checking that runs are bit-exact:
+#   - within a single ref (run #1 vs run #2 vs run #3 of the same branch)
+#   - across refs at the same run index (branch A run #1 vs branch B run #1)
+#
+# The script starts a `vllm serve` process once per ref, waits for /health,
+# optionally does some warmup runs (discarded), runs the bench N times
+# against it, kills the server, then moves on to the next ref. Each
+# measured run produces a results JSON + a text-only file extracted with
+# `jq -r '.generated_texts[]'`.
+#
+# Run with (from the repo root):
+#   python3 run_output_comparison.py output_comparison_matrix.yaml
+
+archive_dir: /home/michael.blum/vLLM_Patched/benchmarks/output_comparison_results/
+num_runs_per_branch: 3
+
+# Optional warmup runs per branch, discarded and not compared. The first
+# bench call after a fresh `vllm serve` may take a different code path
+# (cold kernels, empty torch compile cache, autotune decisions) than
+# subsequent calls, which can cause run #1 to diverge from runs #2..N
+# even with VLLM_BATCH_INVARIANT=1. Set to 0 to disable.
+warmup_runs: 3
+
+# Server settings. One `vllm serve` is started per branch and reused for
+# all of that branch's runs.
+server:
+  port: 8000
+  health_timeout_sec: 600         # how long to wait for GET /health to return 200
+  shutdown_timeout_sec: 60        # SIGTERM grace before SIGKILL
+  port_release_timeout_sec: 120   # after kill, how long to wait for the port
+                                  # to actually be reusable (tensor-parallel
+                                  # workers can outlive the parent briefly)
+
+# Env vars applied to both server and bench-client subprocesses.
+env:
+  VLLM_BATCH_INVARIANT: "1"
+  CUBLAS_WORKSPACE_CONFIG: ":4096:8"
+
+# Defaults applied to every bench invocation. Anything here can be
+# overridden on a per-ref basis under `runs[].bench_overrides`.
+bench_defaults:
+  dataset_name: sharegpt
+  dataset_path: ./ShareGPT_V3_unfiltered_cleaned_split.json
+  sharegpt_output_len: 128
+  num_prompts: 250
+  seed: 42
+  temperature: 0
+
+# Number of divergent prompts to show in detail when two text files don't
+# match. The summary always shows the total count.
+divergence_snippets: 3
+
+runs:
+  - label: llama_vanilla
+    branch: x_vanilla
+    model: meta-llama/Meta-Llama-3.1-8B-Instruct
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
+
+  - label: llama_platform
+    branch: x_platform_only
+    model: meta-llama/Meta-Llama-3.1-8B-Instruct
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
+
+  - label: qwen3_vanilla
+    branch: x_vanilla
+    model: Qwen/Qwen3-8B 
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
+
+  - label: qwen3_platform
+    branch: x_platform_only
+    model: Qwen/Qwen3-8B 
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
+
+  - label: mixtral_vanilla
+    branch: x_vanilla
+    model: mistralai/Mixtral-8x7B-Instruct-v0.1 
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
+
+  - label: mixtral_platform
+    branch: x_platform_only
+    model: mistralai/Mixtral-8x7B-Instruct-v0.1 
+    serve_args: "--dtype float16 --tensor-parallel-size 2"
