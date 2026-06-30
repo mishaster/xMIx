@@ -216,6 +216,12 @@ Multiple synth files can be applied in a single command (`apply a_synth.py b_syn
 
 ---
 
+## Worked Example
+
+[`examples/xmix_steering_demo.ipynb`](examples/xmix_steering_demo.ipynb) is a runnable notebook that walks through the full workflow end-to-end on Llama-3.1-8B: it compiles and injects the `app1_refuse` application (refusal-direction ablation), serves the model with `vllm serve`, and sends the same chat request **before** and **after** steering — the baseline refuses, the steered model complies. The notebook ships with its outputs saved, so you can read the results on GitHub or run it yourself (needs 2 GPUs).
+
+---
+
 ## Citation
 
 ```bibtex
