@@ -38,6 +38,17 @@ All three primitives are composable across layers and can run simultaneously in 
 
 ---
 
+## Supported Models
+
+| `#model:` pragma | Model families | Example models |
+|---|---|---|
+| `llama` (default) | Llama 2 / 3 / 3.1 / 3.2 / 3.3, Mistral | `meta-llama/Llama-3.1-8B-Instruct`, `mistralai/Mistral-7B-v0.3` |
+| `qwen` | Qwen3 (all sizes) | `Qwen/Qwen3-8B`, `Qwen/Qwen3-32B` |
+| `mixtral` | Mixtral MoE | `mistralai/Mixtral-8x7B-Instruct-v0.1`, `mistralai/Mixtral-8x22B-Instruct-v0.1` |
+| `qwen2` | Qwen2, Qwen2.5, DeepSeek-R1-Distill | `Qwen/Qwen2.5-7B-Instruct`, `deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B` |
+
+---
+
 ## Installation
 
 **Prerequisites:** Python ≥ 3.10, CUDA 12.x toolkit, NVIDIA GPU (A100 tested).
@@ -153,6 +164,32 @@ m.write(self.steer_refusal_vec.run).layer("all").submodule("mlp.post")
 The `# model:` pragma selects which model file anchors resolve to (`llama`, `qwen`, or `mixtral`); omit it to default to `llama`.
 
 For more examples covering token-conditional steering (App-2), activation-gated steering (App-3), read-only probing (App-4), MoE router steering (App-7), and others, see `vllm/activations_extractor/applications/xmix_examples/`.
+
+---
+
+## Available Classes
+
+### Write ops — `m.write(...)`
+
+| Class | Operation |
+|---|---|
+| `SteeringVectorAdder` | For each gated token: `x += Σ_v scales_v · r_v` — adds a per-token weighted sum of steering vectors; token selection is driven by an upstream condition |
+| `SteeringVectorDotSubtractNormalized` | For each gated token: `x -= (x · r̂) r̂` — removes the activation component along a direction (refusal ablation / CAST-style) |
+| `SteeringVectorScaledAdder` | `x += coeff · r` for every token unconditionally — single-vector scaled addition, lightest write op |
+| `SteeringLinear` | For each gated token: `x = Wx + b` — replaces activations with a learned linear transformation (SAKE-style) |
+
+### Read ops — `m.read(...)`
+
+| Class | Operation |
+|---|---|
+| `LinearProbe` | `sigmoid(Wx + b)` — logistic regression probe; returns per-token class probabilities |
+
+### Condition ops — used in `.cond(...)`
+
+| Class | Operation |
+|---|---|
+| `CondProjCosSim` | `cosine_similarity(x, tanh(Px)) > threshold` — gates steering when each token's activation aligns with its projection through a learned matrix P |
+| `EOLTokenDetector` | Fires at model scope when the generated token is an end-of-line token — enables token-triggered steering (SEAL-style) |
 
 ---
 
