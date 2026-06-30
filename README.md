@@ -40,15 +40,75 @@ All three primitives are composable across layers and can run simultaneously in 
 
 ## Installation
 
-**Prerequisites:** Python ≥ 3.10, CUDA 12.x, NVIDIA GPU (A100 tested).
+**Prerequisites:** Python ≥ 3.10, CUDA 12.x toolkit, NVIDIA GPU (A100 tested).
+
+### 1. Clone and create environment
 
 ```bash
 git clone git@github.com:mishaster/xMIx.git
 cd xMIx
-pip install -e .
+conda create -n xmix python=3.11
+conda activate xmix
 ```
 
-This is a patched fork of vLLM — it replaces the `vllm` package in your environment. All standard vLLM functionality is preserved.
+### 2. Install the CUDA toolkit
+
+First check whether CUDA is already installed on your system:
+
+```bash
+ls /usr/local/ | grep cuda        # system-wide install
+module avail | grep -i cuda       # HPC cluster with modules
+```
+
+If found (e.g. `/usr/local/cuda-12.8`), skip to step 3 and set `CUDA_HOME` to that path.
+
+If not found, install it — no sudo required:
+
+```bash
+conda install -c nvidia cuda-toolkit=12.8
+```
+
+### 3. Set environment variables
+
+**If CUDA is installed system-wide** (e.g. via apt or the NVIDIA `.run` installer):
+```bash
+export CUDA_HOME=/usr/local/cuda-12.8   # adjust version as needed
+export CUDACXX=$CUDA_HOME/bin/nvcc
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib:$LD_LIBRARY_PATH
+```
+
+**If CUDA was installed via conda** (step 2 above):
+```bash
+export CUDA_HOME=$CONDA_PREFIX
+export CUDACXX=$CUDA_HOME/bin/nvcc
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib:$LD_LIBRARY_PATH
+export CMAKE_ARGS="-DCUDA_TOOLKIT_ROOT_DIR=$CONDA_PREFIX/targets/x86_64-linux -DCUDAToolkit_ROOT=$CONDA_PREFIX/targets/x86_64-linux"
+```
+
+For A100 GPUs, also set (speeds up compilation significantly):
+```bash
+export TORCH_CUDA_ARCH_LIST="8.0"
+```
+
+### 4. Install PyTorch
+
+```bash
+pip install torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+```
+
+Replace `cu128` with your CUDA version if different (check with `nvcc --version`).
+
+### 5. Install xMIx
+
+```bash
+pip install setuptools-scm setuptools wheel packaging ninja cmake jinja2
+pip install -e . --no-build-isolation
+```
+
+This compiles CUDA/Triton kernels from source and will take 30–90 minutes on first install. This is a patched fork of vLLM — it replaces the `vllm` package in your environment. All standard vLLM functionality is preserved.
 
 ---
 
@@ -66,7 +126,7 @@ xMIx hooks are injected at the source level before the server starts; no changes
 
 ## Writing .xmix Applications
 
-A `.xmix` file is valid Python that the xMIx compiler parses with `ast` but never executes. It has two parts: a **preamble** where you construct your MI objects, followed by **DSL statements** that declare where those objects hook into the model.
+A `.xmix` file is valid Python that the xMIx compiler parses with `ast` but never executes. There a few examplary applications implemented in the paper under: vllm/activations\_extractor/applications/xmix\_examples/ . It has two parts: a **preamble** where you construct your MI objects, followed by **DSL statements** that declare where those objects hook into the model.
 
 ### Example: unconditional steering on all layers
 
@@ -74,12 +134,11 @@ A `.xmix` file is valid Python that the xMIx compiler parses with `ast` but neve
 # model: llama
 
 # Preamble — construct MI objects; torch and self (gpu_model_runner) are in scope
-self.vec_indices = torch.full((2048,), 1, dtype=torch.int32, device=self.device)
-self.arbitrary_vector = torch.full((self.hidden_size,), 0.1, device=self.device, dtype=self.model_config.dtype)
+self.vec_indices = torch.full((2048,), 1, dtype=torch.int32)
+self.arbitrary_vector = torch.full((self.hidden_size,), 0.1)
 self.steer_refusal_vec = SteeringVectorDotSubtractNormalized(
     hidden_size=self.model_config.hidden_size, max_tokens=2048,
-    steering_vector=self.arbitrary_vector, vec_indices=self.vec_indices,
-    dtype=self.model_config.dtype, device=self.device)
+    steering_vector=self.arbitrary_vector, vec_indices=self.vec_indices)
 
 # DSL statement — write to mlp.post on every layer
 m.write(self.steer_refusal_vec.run).layer("all").submodule("mlp.post")
