@@ -2,7 +2,7 @@
 
 **Serving-native Mechanistic Interpretability for production LLM inference.**
 
-[![Paper](https://img.shields.shields.shields.shields.shields.shields/badge/Download-Paper-blue.svg)](https://github.com/mishaster/xMIx/releases/download/v1.0.0-preprint/xmix_preprint.pdf)
+**[📄 Download Paper (PDF)](https://github.com/mishaster/xMIx/releases/download/v1.0.0-preprint/xmix_preprint.pdf)**
 
 Or download the preprint directly [here](https://github.com/mishaster/xMIx/releases/download/v1.0.0-preprint/xmix_preprint.pdf).
 [Paper (arXiv link forthcoming)]
